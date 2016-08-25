@@ -6,7 +6,6 @@ import uuid
 
 from slackclient import SlackClient
 
-
 # avabot's ID as an environment variable
 BOT_ID = os.environ.get("BOT_ID")
 BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
@@ -14,7 +13,7 @@ FTP_URL = os.environ.get('FTP_URL')
 FTP_USER = os.environ.get('FTP_USER')
 FTP_PASS = os.environ.get('FTP_PASS')
 FTP_DIR = os.environ.get('FTP_DIR')
-FILE_LIST = os.environ.get('FILE_LIST')
+MAGIC_WORD = os.environ.get('MAGIC_WORD')
 
 # constants
 AT_BOT = "<@" + BOT_ID + ">"
@@ -28,15 +27,18 @@ class Message(object):
         self.type = type
         self.channel = channel
         self.text = text
+        self.response = "Do you have any friends you can share?"
 
 class File(Message):
     def __init__(self, file_id):
         Message.__init__(self, 'file', None, None)
-        self.file_id = file_id
+        self.response = self.download_image(file_id)
 
-    def download_image(self):
+    def download_image(self, file_id):
+        """ Downloads an image and returns a response. Returns None on failure
+            or if there is nothing to say. Sets the channel. """
         # Get the file info from the File ID
-        response = slack_client.api_call("files.info", file=str(self.file_id))
+        response = slack_client.api_call("files.info", file=str(file_id))
         if not response['ok']:
             return None
         user_id = response['file']['user']
@@ -44,7 +46,7 @@ class File(Message):
         size = response['file']['size']
         filetype = response['file']['filetype']
         title = response['file']['title']
-        if 'rick' not in title:
+        if MAGIC_WORD not in title:
             return None
         elif size > 1024 * 1000:
             return "I can't handle images more than a megabyte."
@@ -59,7 +61,8 @@ class File(Message):
             return "I could not download the image at " + url
 
         # Where should the file go?
-        output_dir = user_id
+        subdir = get_username_from_id(user_id)
+        output_dir = os.path.join('downloadedImages', subdir)
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         output_filename = str(uuid.uuid4()) + '.' + filetype
@@ -76,6 +79,8 @@ class File(Message):
         return "Thanks for the tip, friend!"
 
 def create_js_list(file_list, output_filepath):
+    """ Writes a javascript file containing a list of images outlined in
+        file_list. Assumes there is only one avabot server running. """
     with open(output_filepath, 'wb') as myfile:
         myfile.write('function getImages() {\n')
         myfile.write('  return [\n')
@@ -85,46 +90,48 @@ def create_js_list(file_list, output_filepath):
         myfile.write('] }')
 
 def upload_image(localFile):
+    """ Upload the image at localFile to the FTP_DIR with the same name. """
     with pysftp.Connection(FTP_URL, username=FTP_USER, password=FTP_PASS) as sftp:
         with sftp.cd(FTP_DIR):
             # Put the image
             sftp.put(localFile)
 
-            # Add the image's filename to FILE_LIST
+            # Add the image's filename to uploadedFiles.txt
             if localFile: # will only be false on test cases
-                with open(FILE_LIST, "a") as myfile:
+                with open('uploadedFiles.txt', "a") as myfile:
                     myfile.write(os.path.basename(localFile) + "\n")
 
-            # Add contents of FILE_LIST to a js list
-            with open(FILE_LIST, "r") as myfile:
+            # Add contents of uploadedFiles.txt to a js list
+            with open('uploadedFiles.txt', "r") as myfile:
                 file_list = myfile.read().split('\n')
             output_filepath = 'imagelist.js'
             create_js_list(file_list, output_filepath)
             sftp.put(output_filepath)
 
 def handle_command(message):
-    if message.type == 'text':
-        response = "Do you have any friends you can share?"
-    elif message.type == 'file':
-        response = message.download_image()
-
-    if response is None:
+    if message.response is None:
         print "Ignoring request of type ", message.type
         return
 
-    print "Sending '" + response + "' to " + message.channel
+    print "Sending '" + message.response + "' to " + message.channel
     slack_client.api_call("chat.postMessage",
                           channel=message.channel,
-                          text=response,
+                          text=message.response,
                           as_user=True)
 
+def get_username_from_id(uid):
+    """ Returns the username corresponding to the ID, or on failure,
+        the user ID itself. """
+    response = slack_client.api_call("users.info", user=uid)
+    if not response['ok']:
+        return uid
+    else:
+        return response['user']['name'] + "-" + uid
 
 def parse_slack_output(slack_rtm_output):
-    """
-        The Slack Real Time Messaging API is an events firehose.
+    """ The Slack Real Time Messaging API is an events firehose.
         this parsing function returns None unless a message is
-        directed at the Bot, based on its ID.
-    """
+        directed at the Bot, based on its ID.  """
     output_list = slack_rtm_output
     if output_list and len(output_list) > 0:
         for output in output_list:
@@ -139,10 +146,7 @@ def parse_slack_output(slack_rtm_output):
                 return File(file_id=file_id)
     return None
 
-
 if __name__ == "__main__":
-    #upload_image('U0E68ATT4/1293699a-d85a-4e78-9281-24896e67de86.jpg')
-    #exit()
     READ_WEBSOCKET_DELAY = 1 # 1 second delay between reading from firehose
     if slack_client.rtm_connect():
         print("Ava is listening")
