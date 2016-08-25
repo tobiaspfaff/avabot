@@ -47,7 +47,7 @@ class File(Message):
         size = response['file']['size']
         filetype = response['file']['filetype']
         title = response['file']['title']
-        if MAGIC_WORD not in title:
+        if MAGIC_WORD not in title.lower():
             return None
         elif size > 1024 * 1000:
             return "I can't handle images more than a megabyte."
