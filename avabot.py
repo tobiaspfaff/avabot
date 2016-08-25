@@ -3,6 +3,7 @@ import pysftp
 import requests
 import time
 import uuid
+import websocket
 
 from slackclient import SlackClient
 
@@ -151,7 +152,13 @@ if __name__ == "__main__":
     if slack_client.rtm_connect():
         print("Ava is listening")
         while True:
-            message = parse_slack_output(slack_client.rtm_read())
+            try:
+                message = parse_slack_output(slack_client.rtm_read())
+            except websocket._exceptions.WebSocketConnectionClosedException:
+                print "Web socket connection closed, attempting to reconnect."
+                if not slack_client.rtm_connect():
+                    print "Failed. Dying."
+                    raise
             if message:
                 handle_command(message)
             time.sleep(READ_WEBSOCKET_DELAY)
