@@ -38,12 +38,15 @@ class File(Message):
         # Get the file info from the File ID
         response = slack_client.api_call("files.info", file=str(self.file_id))
         if not response['ok']:
-            return "I don't understand your message."
+            return None
         user_id = response['file']['user']
         self.channel = user_id
         size = response['file']['size']
         filetype = response['file']['filetype']
-        if size > 1024 * 1000:
+        title = response['file']['title']
+        if 'rick' not in title:
+            return None
+        elif size > 1024 * 1000:
             return "I can't handle images more than a megabyte."
         elif filetype != "jpg" and filetype != "png":
             return "I can only handle PNGs and JPGs"
@@ -104,6 +107,10 @@ def handle_command(message):
         response = "Do you have any friends you can share?"
     elif message.type == 'file':
         response = message.download_image()
+
+    if response is None:
+        print "Ignoring request of type ", message.type
+        return
 
     print "Sending '" + response + "' to " + message.channel
     slack_client.api_call("chat.postMessage",
