@@ -35,8 +35,9 @@ class Message(object):
         self.type = type
         self.channel = channel
         self.text = text
+        self.response = None
 
-        if text and MAGIC_DELETE in text.lower() and MAGIC_WORD in text.lower():
+        if text and MAGIC_DELETE in text.lower():
             openBracket = text.find("[")
             closeBracket = text.find("]")
             if openBracket < 0 or closeBracket < 0:
