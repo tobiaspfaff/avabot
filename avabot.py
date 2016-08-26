@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import md5
 import os
 import pysftp
@@ -18,6 +19,7 @@ FTP_PASS = os.environ.get('FTP_PASS')
 FTP_DIR = os.environ.get('FTP_DIR')
 MAGIC_WORD = os.environ.get('MAGIC_WORD')
 MAGIC_DELETE = os.environ.get('MAGIC_DELETE')
+MAGIC_BS = ['chiclet','affinity','lookbook','restful','lookbatch','endpoint','blocker']
 
 FILELIST_TXT = 'uploadedFiles.txt'
 FILELIST_JS = 'imagelist.js'
@@ -28,6 +30,13 @@ AT_BOT = "<@" + BOT_ID + ">"
 
 # instantiate Slack & Twilio clients
 slack_client = SlackClient(BOT_TOKEN)
+
+
+class SimpleResponse(object):
+    def __init__(self, type, channel, response):
+        self.type = type
+        self.channel = channel
+        self.response = response
 
 
 class Message(object):
@@ -189,8 +198,14 @@ def parse_slack_output(slack_rtm_output):
     output_list = slack_rtm_output
     if output_list and len(output_list) > 0:
         for output in output_list:
-            if output['type'] == 'message' and 'text' in output:
+            if output['type'] == 'message' and 'text' in output:                
                 text = output['text']
+                if output['user'] != BOT_ID: # prevent sending Ava into a loop
+                    for keyword in MAGIC_BS:
+                        if keyword in text:
+                            return SimpleResponse(type='text',
+                                                  channel=output['channel'],
+                                                  response=keyword + ' indeed!')
                 if text.startswith(AT_BOT):
                     return Message(type='text',
                                    channel=output['channel'],
