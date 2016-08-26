@@ -1,6 +1,8 @@
+import md5
 import os
 import pysftp
 import requests
+import shutil
 import time
 import uuid
 import websocket
@@ -15,6 +17,11 @@ FTP_USER = os.environ.get('FTP_USER')
 FTP_PASS = os.environ.get('FTP_PASS')
 FTP_DIR = os.environ.get('FTP_DIR')
 MAGIC_WORD = os.environ.get('MAGIC_WORD')
+MAGIC_DELETE = os.environ.get('MAGIC_DELETE')
+
+FILELIST_TXT = 'uploadedFiles.txt'
+FILELIST_JS = 'imagelist.js'
+
 
 # constants
 AT_BOT = "<@" + BOT_ID + ">"
@@ -28,7 +35,27 @@ class Message(object):
         self.type = type
         self.channel = channel
         self.text = text
-        self.response = "Do you have any friends you can share?"
+
+        if text and MAGIC_DELETE in text.lower() and MAGIC_WORD in text.lower():
+            openBracket = text.find("[")
+            closeBracket = text.find("]")
+            if openBracket < 0 or closeBracket < 0:
+                self.response =\
+                    "Which {}? Tell me using [brackets]".format(MAGIC_WORD)
+            else:
+                filename = text[openBracket+1:closeBracket]
+                try:
+                    self.response = "I'll miss that " + MAGIC_WORD
+                    delete_image(filename)
+                except IOError:
+                    self.response = "I could not find any such " + MAGIC_WORD
+
+        # Uncomment for manual mode
+        # if text:
+        #     print "Respond to ", text
+        #     self.response = raw_input()
+        # else:
+        #     self.response = None
 
 class File(Message):
     def __init__(self, file_id):
@@ -61,23 +88,29 @@ class File(Message):
         if not fileResponse.ok:
             return "I could not download the image at " + url
 
-        # Where should the file go?
+        # Where should the file go before we know its md5?
         subdir = get_username_from_id(user_id)
         output_dir = os.path.join('downloadedImages', subdir)
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        output_filename = str(uuid.uuid4()) + '.' + filetype
-        output_filepath = os.path.join(output_dir, output_filename)
+        tmp_filename = str(uuid.uuid4()) + '.' + filetype
+        tmp_filepath = os.path.join(output_dir, tmp_filename)
+        image_md5 = md5.new()
 
         # Read and save the file
-        with open(output_filepath, 'wb') as handle:
+        with open(tmp_filepath, 'wb') as handle:
             for block in fileResponse.iter_content(1024):
                 handle.write(block)
+                image_md5.update(block)
 
-        # Upload the file
+        # Now that we know the md5, move the file there
+        output_filename = image_md5.hexdigest() + '.' + filetype
+        output_filepath = os.path.join(output_dir, output_filename)
+        shutil.move(tmp_filepath, output_filepath)
+
         upload_image(output_filepath)
 
-        return "Thanks for the tip, friend!"
+        return "Thanks for the tip, friend! Don't forget " + output_filename
 
 def create_js_list(file_list, output_filepath):
     """ Writes a javascript file containing a list of images outlined in
@@ -90,22 +123,41 @@ def create_js_list(file_list, output_filepath):
                 myfile.write('    "' + i + '",\n')
         myfile.write('] }')
 
+def delete_file_from_filelist(localFile):
+    with open(FILELIST_TXT, 'r') as myfile:
+        lines = myfile.readlines()
+
+    # Will throw a ValueError if the filename DNE
+    lines.remove(localFile + '\n')
+
+    with open(FILELIST_TXT, 'w') as myfile:
+        myfile.writelines([item for item in lines[:-1]])
+
+def write_file_to_filelist(localFile):
+    with open(FILELIST_TXT, "a") as myfile:
+        myfile.write(os.path.basename(localFile) + "\n")
+
+def delete_image(localFile):
+    upload_delete_helper(localFile, deleteMode=True)
+
 def upload_image(localFile):
+    upload_delete_helper(localFile, deleteMode=False)
+
+def upload_delete_helper(localFile, deleteMode):
     """ Upload the image at localFile to the FTP_DIR with the same name. """
     with pysftp.Connection(FTP_URL, username=FTP_USER, password=FTP_PASS) as sftp:
         with sftp.cd(FTP_DIR):
-            # Put the image
-            sftp.put(localFile)
-
-            # Add the image's filename to uploadedFiles.txt
-            if localFile: # will only be false on test cases
-                with open('uploadedFiles.txt', "a") as myfile:
-                    myfile.write(os.path.basename(localFile) + "\n")
+            if deleteMode:
+                sftp.remove(localFile)
+                delete_file_from_filelist(localFile)
+            else:
+                sftp.put(localFile)
+                write_file_to_filelist(localFile)
 
             # Add contents of uploadedFiles.txt to a js list
-            with open('uploadedFiles.txt', "r") as myfile:
+            with open(FILELIST_TXT, "r") as myfile:
                 file_list = myfile.read().split('\n')
-            output_filepath = 'imagelist.js'
+            output_filepath = FILELIST_JS
             create_js_list(file_list, output_filepath)
             sftp.put(output_filepath)
 
